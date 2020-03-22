@@ -1,0 +1,1402 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+
+    <title>Maze - Luke Irvine</title>
+
+    <!-- Babylon.js -->
+    <script src="https://code.jquery.com/pep/0.4.2/pep.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/dat-gui/0.6.2/dat.gui.min.js"></script>
+    <script src="https://preview.babylonjs.com/ammo.js"></script>
+    <script src="https://preview.babylonjs.com/cannon.js"></script>
+    <script src="https://preview.babylonjs.com/Oimo.js"></script>
+    <script src="https://preview.babylonjs.com/earcut.min.js"></script>
+    <script src="https://preview.babylonjs.com/babylon.js"></script>
+    <script src="https://preview.babylonjs.com/inspector/babylon.inspector.bundle.js"></script>
+    <script src="https://preview.babylonjs.com/materialsLibrary/babylonjs.materials.min.js"></script>
+    <script src="https://preview.babylonjs.com/proceduralTexturesLibrary/babylonjs.proceduralTextures.min.js"></script>
+    <script src="https://preview.babylonjs.com/postProcessesLibrary/babylonjs.postProcess.min.js"></script>
+    <script src="https://preview.babylonjs.com/loaders/babylonjs.loaders.js"></script>
+    <script src="https://preview.babylonjs.com/serializers/babylonjs.serializers.min.js"></script>
+    <script src="https://preview.babylonjs.com/gui/babylon.gui.min.js"></script>
+    <!-- <script src="https://cdn.babylonjs.com/cannon.js"></script> -->
+    <script src="https://cdn.babylonjs.com/Oimo.js"></script>
+
+    <style>
+        html,
+        body {
+            overflow: hidden;
+            width: 100%;
+            height: 100%;
+            margin: 0;
+            padding: 0;
+        }
+
+        #renderCanvas {
+            width: 100%;
+            height: 100%;
+            touch-action: none;
+        }
+    </style>
+</head>
+
+<body>
+    <canvas id="renderCanvas"></canvas>
+    <script>
+        // flag
+        var simple = true;
+
+
+        var canvas = document.getElementById("renderCanvas");
+
+        var engine = null;
+        var scene0 = null;
+        var scene1 = null;
+        var createDefaultEngine = function () { return new BABYLON.Engine(canvas, true, { preserveDrawingBuffer: true, stencil: true }); };
+
+        class Cell {
+            constructor(y, x, visited, links, linkDirection) {
+                this.y = y;
+                this.x = x;
+                this.zCoord = mazeLength / 2 - y * (subLength) - subLength / 2;
+                this.xCoord = -mazeLength / 2 + x * (subLength) + subLength / 2;
+                this.visited = visited;
+                this.links = links;
+                this.linkDirection = linkDirection;
+            }
+            // returns random link
+            get randomLink() {
+                var randNum = Math.floor(Math.random() * (this.links.length));
+                return this.links[randNum];
+            }
+            setVisited(x) {
+                this.visited = x;
+            }
+            pushLinks(x) {
+                this.links.push(x);
+            }
+            get getVisited() {
+                return this.visited;
+            }
+            get getX() {
+                return this.x;
+            }
+            get getY() {
+                return this.y;
+            }
+            get getXCoord() {
+                return this.xCoord;
+            }
+            get getZCoord() {
+                return this.zCoord;
+            }
+            get getLinkDirection() {
+                return this.linkDirection;
+            }
+            get getLinkLength() {
+                return this.links.length;
+            }
+            get getLinks() {
+                return this.links;
+            }
+        };
+
+        // global variables used throughout code
+        var nextScene = false;                  // false sets up welcome screen first
+        var advancedTexture;                    // used for GUIs
+        var sub = 10;                           // default number of maze sub divisions
+        var soundtrack;                         // used for background music throughout
+        var starWars;
+        var replay = true;                      // used to govern when music is played
+        var end = false;                        // set end to true to have player start at end of maze (debugging)
+        var madeIt = false;                     // set to true when player reaches end of maze
+        var volume = 0.75;
+        var difficultyLevel = 0;                // 0 is easy, 1 is medium, 2 is hard
+        var blockZoom = false;                  // when true, zoom is disabled
+        var player;                             // used to create protagonist player mesh
+        var subLength;
+        var elevation;
+        var mazeLength;
+        // var timerStart = false;
+
+
+        /************************************************* scene0: Welcome Menu *****************************************************************/
+        // this scene has the welcome and options menu
+        var createScene0 = function () {
+            // Create the scene1 space
+            var scene0 = new BABYLON.Scene(engine);
+
+            var camera = new BABYLON.ArcRotateCamera("Camera", 0, 0, 5, new BABYLON.Vector3(0, 0, 0), scene0);
+            camera.setPosition(new BABYLON.Vector3(2, 2, 5));
+            camera.attachControl(canvas, true);
+
+            var light = new BABYLON.HemisphericLight("HemiLight", new BABYLON.Vector3(0, 1, 0), scene0);
+
+            // Music
+            var createSoundtrack = function() {
+                soundtrack = new BABYLON.Sound(
+                    "soundtrack",
+                    "sounds/our_universe.wav",
+                    scene0,
+                    null,
+                    {
+                        volume: volume,
+                        autoplay: true,
+                        loop: true
+                    }
+                );
+            }
+            createSoundtrack();
+
+            return scene0;
+        }
+
+        /*************************************************** scene1: The Game *******************************************************************/
+
+        var createScene1 = function () {
+
+            // Create the scene1 space
+            var scene1 = new BABYLON.Scene(engine);
+            scene1.collisionsEnabled = true;
+            scene1.enablePhysics(new BABYLON.Vector3(0, -50, 0), new BABYLON.OimoJSPlugin());
+
+            // Tweaking Variables
+            elevation = 10;
+            var wallHeight = 10;                // don't adjust
+            var wallDepth = 4;                  // don't adjust
+            mazeLength = sub * 10;
+            subLength = mazeLength / sub;
+            var groundSize = mazeLength + sub * 20;
+            var follow = true;                  // true makes camera follow player. False gives bird's eye
+            var cameraGravity = true;           // only works for Universal Camera
+
+            // textures
+            var hedge;
+            var rock;
+            var stone;
+            var bigHedge;
+            var grass;
+            var dirt;
+            var rockTile;
+            var stone2;
+            var pMat;
+            var badGuyRed;
+            var badGuyBlue;
+            var badGuyMagenta
+            var tileCount;
+            var tileCount2;
+            var tileCount3;
+            var tileCount4;
+            var textures = function () {
+                hedge = new BABYLON.StandardMaterial("hedge", scene1);
+                hedge.diffuseTexture = new BABYLON.Texture("textures/hedge.png", scene1);
+                hedge.specularTexture = new BABYLON.Texture("textures/hedge.png", scene1);
+                hedge.ambientTexture = new BABYLON.Texture("textures/hedge.png", scene1);
+                hedge.alpha = 1;
+
+                rock = new BABYLON.StandardMaterial("rock", scene1);
+                rock.diffuseTexture = new BABYLON.Texture("textures/rock.jpg", scene1);
+                rock.specularTexture = new BABYLON.Texture("textures/rock.jpg", scene1);
+                rock.ambientTexture = new BABYLON.Texture("textures/rock.jpg", scene1);
+
+                stone = new BABYLON.StandardMaterial("stone", scene1);
+                tileCount = Math.round(sub * 0.83);
+                stone.diffuseTexture = new BABYLON.Texture("textures/stone.jpg", scene1);
+                stone.specularTexture = new BABYLON.Texture("textures/stone.jpg", scene1);
+                stone.ambientTexture = new BABYLON.Texture("textures/stone.jpg", scene1);
+                stone.diffuseTexture.uScale = tileCount;
+                stone.diffuseTexture.vScale = tileCount;
+                stone.specularTexture.uScale = tileCount;
+                stone.specularTexture.vScale = tileCount;
+                stone.ambientTexture.uScale = tileCount;
+                stone.ambientTexture.vScale = tileCount;
+
+                bigHedge = new BABYLON.StandardMaterial("bigHedge", scene1);
+                tileCount2 = Math.round(groundSize / (sub * 4));
+                bigHedge.diffuseTexture = new BABYLON.Texture("textures/hedge.png", scene1);
+                bigHedge.specularTexture = new BABYLON.Texture("textures/hedge.png", scene1);
+                bigHedge.ambientTexture = new BABYLON.Texture("textures/hedge.png", scene1);
+                bigHedge.diffuseTexture.uScale = tileCount2;
+                bigHedge.diffuseTexture.vScale = tileCount2;
+                bigHedge.specularTexture.uScale = tileCount2;
+                bigHedge.specularTexture.vScale = tileCount2;
+                bigHedge.ambientTexture.uScale = tileCount2;
+                bigHedge.ambientTexture.vScale = tileCount2;
+
+                grass = new BABYLON.StandardMaterial("grass", scene1);
+                tileCount4 = Math.round(sub * 1.5)
+                grass.diffuseTexture = new BABYLON.Texture("textures/grassy.jpg", scene1);
+                grass.specularTexture = new BABYLON.Texture("textures/grassy.jpg", scene1);
+                grass.ambientTexture = new BABYLON.Texture("textures/grassy.jpg", scene1);
+                grass.diffuseTexture.uScale = tileCount4;
+                grass.diffuseTexture.vScale = tileCount4 / 3;
+                grass.specularTexture.uScale = tileCount4;
+                grass.specularTexture.vScale = tileCount4 / 3;
+                grass.ambientTexture.uScale = tileCount4;
+                grass.ambientTexture.vScale = tileCount4 / 3;
+
+                dirt = new BABYLON.StandardMaterial("dirt", scene1);
+                dirt.diffuseTexture = new BABYLON.Texture("textures/dirt.jpg", scene1);
+                dirt.specularTexture = new BABYLON.Texture("textures/dirt.jpg", scene1);
+                dirt.ambientTexture = new BABYLON.Texture("textures/dirt.jpg", scene1);
+                dirt.diffuseTexture.uScale = tileCount4;
+                dirt.diffuseTexture.vScale = tileCount4;
+                dirt.specularTexture.uScale = tileCount4;
+                dirt.specularTexture.vScale = tileCount4;
+                dirt.ambientTexture.uScale = tileCount4;
+                dirt.ambientTexture.vScale = tileCount4;
+
+                rockTile = new BABYLON.StandardMaterial("stone", scene1);
+                tileCount3 = Math.round(groundSize / (sub * 2));
+                rockTile.diffuseTexture = new BABYLON.Texture("textures/rock.jpg", scene1);
+                rockTile.specularTexture = new BABYLON.Texture("textures/rock.jpg", scene1);
+                rockTile.ambientTexture = new BABYLON.Texture("textures/rock.jpg", scene1);
+                rockTile.diffuseTexture.uScale = tileCount3;
+                rockTile.diffuseTexture.vScale = 1;
+                rockTile.specularTexture.uScale = tileCount3;
+                rockTile.specularTexture.vScale = 1;
+                rockTile.ambientTexture.uScale = tileCount3;
+                rockTile.ambientTexture.vScale = 1;
+
+                stone2 = new BABYLON.StandardMaterial("stone", scene1);
+                tileCount = Math.round(sub * 0.83);
+                stone2.diffuseTexture = new BABYLON.Texture("textures/stone.jpg", scene1);
+                stone2.specularTexture = new BABYLON.Texture("textures/stone.jpg", scene1);
+                stone2.ambientTexture = new BABYLON.Texture("textures/stone.jpg", scene1);
+                stone2.diffuseTexture.uScale = tileCount;
+                stone2.diffuseTexture.vScale = 1;
+                stone2.specularTexture.uScale = tileCount;
+                stone2.specularTexture.vScale = 1;
+                stone2.ambientTexture.uScale = tileCount;
+                stone2.ambientTexture.vScale = 1;
+
+                // for spheres around sprites
+                pMat = new BABYLON.StandardMaterial("pMat", scene1);
+                pMat.emissiveColor = new BABYLON.Color3(1, 1, 0);
+                pMat.alpha = 0;
+
+                var badGuyAlpha = 0.75;
+
+                badGuyRed = new BABYLON.StandardMaterial("badGuyRed", scene1);
+                badGuyRed.diffuseColor = new BABYLON.Color3(1, 0, 0);
+                badGuyRed.alpha = badGuyAlpha;
+
+                badGuyBlue = new BABYLON.StandardMaterial("badGuyBlue", scene1);
+                badGuyBlue.diffuseColor = new BABYLON.Color3(0, 0, 1);
+                badGuyBlue.alpha = badGuyAlpha;
+
+                badGuyMagenta = new BABYLON.StandardMaterial("badGuyMagenta", scene1);
+                badGuyMagenta.diffuseColor = new BABYLON.Color3(1, 0, 1);
+                badGuyMagenta.alpha = badGuyAlpha;
+
+                badGuyYellow = new BABYLON.StandardMaterial("badGuyYellow", scene1);
+                badGuyYellow.diffuseColor = new BABYLON.Color3(1, 1, 0);
+                badGuyYellow.alpha = badGuyAlpha;
+
+                badGuyGreen = new BABYLON.StandardMaterial("badGuyGreen", scene1);
+                badGuyGreen.diffuseColor = new BABYLON.Color3(0, 1, 0);
+                badGuyGreen.alpha = badGuyAlpha;
+
+                badGuyWhite = new BABYLON.StandardMaterial("badGuyWhite", scene1);
+                badGuyWhite.diffuseColor = new BABYLON.Color3(1, 1, 1);
+                badGuyWhite.alpha = badGuyAlpha;
+
+                badGuyBlack = new BABYLON.StandardMaterial("badGuyBlack", scene1);
+                badGuyBlack.diffuseColor = new BABYLON.Color3(0, 0, 0);
+                badGuyBlack.alpha = badGuyAlpha;
+            }
+            textures();
+
+            // Sounds and Music
+            var createSounds = function() {
+                if (replay) {
+                    soundtrack = new BABYLON.Sound(
+                        "soundtrack",
+                        "sounds/forbidden_valley_gate.wav",
+                        scene1,
+                        null,
+                        {
+                            volume: volume,
+                            autoplay: true,
+                            loop: true
+                        }
+                    );
+                }
+
+                // Party Music
+                starWars = new BABYLON.Sound(
+                    "starWars",
+                    "sounds/star_wars.wav",
+                    scene1,
+                    null,
+                    {
+                        volume: volume,
+                        autoplay: false,
+                        loop: true
+                    }
+                );
+            }
+            createSounds();
+
+
+            // Skybox
+            var createSky = function() {
+                var skybox = BABYLON.Mesh.CreateBox("skyBox", 2000.0, scene1);
+                var skyboxMaterial = new BABYLON.StandardMaterial("skyBox", scene1);
+                skyboxMaterial.backFaceCulling = false;
+                skyboxMaterial.disableLighting = true;
+                skybox.material = skyboxMaterial;
+                skybox.infiniteDistance = true;
+                skyboxMaterial.disableLighting = true;
+                skyboxMaterial.reflectionTexture = new BABYLON.CubeTexture("images/sunset/sunset", scene1);
+                skyboxMaterial.reflectionTexture.coordinatesMode = BABYLON.Texture.SKYBOX_MODE;
+            }
+            createSky();
+
+            // Cameras
+            var followCam;
+            var camera;
+            var cameras = function() {
+                if (follow) {
+                    // follow camera
+                    followCam = new BABYLON.FollowCamera("FollowCam", new BABYLON.Vector3(0, 20, -groundSize / 2), scene1);
+                    followCam.radius = 15;
+                    followCam.heightOffset = 30;
+                    followCam.rotationOffset = 180;
+                    followCam.cameraAcceleration = 0.115
+                    followCam.maxCameraSpeed = 10
+                    // followCam.attachControl(canvas, true);
+                }
+                else {
+                    // Universe Camera
+                    camera = new BABYLON.UniversalCamera("UniversalCamera", new BABYLON.Vector3(0, sub * 12, -100), scene1);
+                    camera.setTarget(new BABYLON.Vector3(0, 6, 0));
+                    camera.attachControl(canvas, true);
+                    camera.applyGravity = cameraGravity;
+                    camera.ellipsoid = new BABYLON.Vector3(1, 14, 1);
+                    camera.checkCollisions = true;
+                }
+            }
+            cameras();
+
+            // Scene Lighting
+            var light;
+            var createLighting = function() {
+                light = new BABYLON.HemisphericLight("HemiLight", new BABYLON.Vector3(0, 100, 0), scene1);
+                // light.diffuse = new BABYLON.Color3(0.3, 0.3, 0.3);
+                // var playerLight = new BABYLON.PointLight("lamplight", new BABYLON.Vector3(-subLength / 2, 3, -mazeLength / 2 - mazeLength * 0.05), scene1);
+                // playerLight.diffuse = new BABYLON.Color3(0.9, 0.7, 0.4);
+                // playerLight.specular = new BABYLON.Color3(0.4, 0.2, 0);
+            }
+            createLighting();
+
+            // Ground, elevated ground, and surrounding walls
+            var trenchSize;
+            var worldStructure = function() {
+                // Ground
+                var myGround = BABYLON.MeshBuilder.CreateGround("myGround", { width: groundSize, height: groundSize, subdivisions: 5 }, scene1);
+                myGround.material = dirt;
+                myGround.checkCollisions = true;
+                myGround.physicsImpostor = new BABYLON.PhysicsImpostor(
+                    myGround, BABYLON.PhysicsImpostor.BoxImpostor,
+                    { mass: 0, restitution: 1, friction: 0 }, scene1);
+
+                // floor of maze
+                var floor = new BABYLON.MeshBuilder.CreateBox("floor", { width: mazeLength, depth: mazeLength + wallDepth, height: 0.5 }, scene1);
+                floor.material = stone;
+                floor.position.y = elevation - 0.2;
+
+                // Outer Wall
+                var bigWallHeight = 50 + elevation;
+                var northWall = new BABYLON.MeshBuilder.CreateBox("northWall", { height: bigWallHeight, width: groundSize, depth: 20 }, scene1);
+                northWall.position.z = groundSize / 2 + 10;
+                northWall.position.y = bigWallHeight / 2;
+                northWall.checkCollisions = true;
+                northWall.material = bigHedge;
+
+                var eastWall = new BABYLON.MeshBuilder.CreateBox("northWall", { height: bigWallHeight, width: groundSize, depth: 20 }, scene1);
+                eastWall.position.x = groundSize / 2 + 10;
+                eastWall.position.y = bigWallHeight / 2;
+                eastWall.rotation.y = Math.PI / 2;
+                eastWall.checkCollisions = true;
+                eastWall.material = bigHedge;
+
+                var westWall = new BABYLON.MeshBuilder.CreateBox("northWall", { height: bigWallHeight, width: groundSize, depth: 20 }, scene1);
+                westWall.position.x = -(groundSize / 2 + 10);
+                westWall.position.y = bigWallHeight / 2;
+                westWall.rotation.y = Math.PI / 2;
+                westWall.checkCollisions = true;
+                westWall.material = bigHedge;
+
+                var southWall = new BABYLON.MeshBuilder.CreateBox("northWall", { height: bigWallHeight, width: groundSize, depth: 20 }, scene1);
+                southWall.position.z = -(groundSize / 2 + 10);
+                southWall.position.y = bigWallHeight / 2;
+                southWall.checkCollisions = true;
+                southWall.material = bigHedge;
+
+                // Elevated Floor
+                if (elevation != 0) {
+                    trenchSize = 10;
+                    var southGroundLeft = new BABYLON.MeshBuilder.CreateBox("southGroundLeft", { height: elevation, width: (groundSize - mazeLength) / 2, depth: groundSize / 2 - trenchSize / 2 }, scene1);
+                    southGroundLeft.material = grass;
+                    southGroundLeft.position.z = -(groundSize / 4 + trenchSize / 4);
+                    southGroundLeft.position.y = elevation / 2;
+                    southGroundLeft.position.x = -(mazeLength / 2 + ((groundSize - mazeLength) / 2) / 2);
+                    southGroundLeft.checkCollisions = true;
+                    southGroundLeft.physicsImpostor = new BABYLON.PhysicsImpostor(
+                        southGroundLeft, BABYLON.PhysicsImpostor.BoxImpostor,
+                        { mass: 0, restitution: 1, friction: 0 }, scene1);
+
+                    var southGroundRight = new BABYLON.MeshBuilder.CreateBox("southGroundLeft", { height: elevation, width: (groundSize - mazeLength) / 2, depth: groundSize / 2 - trenchSize / 2 }, scene1);
+                    southGroundRight.material = grass;
+                    southGroundRight.position.z = -(groundSize / 4 + trenchSize / 4);
+                    southGroundRight.position.y = elevation / 2;
+                    southGroundRight.position.x = mazeLength / 2 + ((groundSize - mazeLength) / 2) / 2;
+                    southGroundRight.checkCollisions = true;
+                    southGroundRight.physicsImpostor = new BABYLON.PhysicsImpostor(
+                        southGroundRight, BABYLON.PhysicsImpostor.BoxImpostor,
+                        { mass: 0, restitution: 1, friction: 0 }, scene1);
+
+                    var northGroundLeft = new BABYLON.MeshBuilder.CreateBox("southGroundLeft", { height: elevation, width: (groundSize - mazeLength) / 2, depth: groundSize / 2 - trenchSize / 2 }, scene1);
+                    northGroundLeft.material = grass;
+                    northGroundLeft.position.z = groundSize / 4 + trenchSize / 4;
+                    northGroundLeft.position.y = elevation / 2;
+                    northGroundLeft.position.x = -(mazeLength / 2 + ((groundSize - mazeLength) / 2) / 2);
+                    northGroundLeft.checkCollisions = true;
+                    northGroundLeft.physicsImpostor = new BABYLON.PhysicsImpostor(
+                        northGroundLeft, BABYLON.PhysicsImpostor.BoxImpostor,
+                        { mass: 0, restitution: 1, friction: 0 }, scene1);
+
+                    var northGroundRight = new BABYLON.MeshBuilder.CreateBox("southGroundLeft", { height: elevation, width: (groundSize - mazeLength) / 2, depth: groundSize / 2 - trenchSize / 2 }, scene1);
+                    northGroundRight.material = grass;
+                    northGroundRight.position.z = groundSize / 4 + trenchSize / 4;
+                    northGroundRight.position.y = elevation / 2;
+                    northGroundRight.position.x = mazeLength / 2 + ((groundSize - mazeLength) / 2) / 2;
+                    northGroundRight.checkCollisions = true;
+                    northGroundRight.physicsImpostor = new BABYLON.PhysicsImpostor(
+                        northGroundRight, BABYLON.PhysicsImpostor.BoxImpostor,
+                        { mass: 0, restitution: 1, friction: 0 }, scene1);
+
+                    var centerGround = new BABYLON.MeshBuilder.CreateBox("southGroundLeft", { height: elevation, width: mazeLength, depth: groundSize }, scene1);
+                    centerGround.material = grass;
+                    centerGround.position.y = elevation / 2;
+                    centerGround.checkCollisions = true;
+                    centerGround.physicsImpostor = new BABYLON.PhysicsImpostor(
+                        centerGround, BABYLON.PhysicsImpostor.BoxImpostor,
+                        { mass: 0, restitution: 1, friction: 0 }, scene1);
+
+                    // var lowerWall = new BABYLON.MeshBuilder.CreateBox("lowerWall", {height: elevation, width: mazeLength + wallDepth, depth: trenchSize}, scene1);
+                    // lowerWall.checkCollisions = true;
+                    // lowerWall.material = hedge;
+                    // lowerWall.position.y = elevation / 2;
+
+                    var northEdge = new BABYLON.MeshBuilder.CreateBox("northEdge", { height: elevation, width: groundSize, depth: 0.1 }, scene1);
+                    northEdge.position.z = trenchSize / 2;
+                    northEdge.position.y = elevation / 2;
+                    northEdge.material = stone2;
+
+                    var westEdge = new BABYLON.MeshBuilder.CreateBox("northEdge", { height: elevation - 0.1, width: groundSize, depth: 0.1 }, scene1);
+                    westEdge.position.y = elevation / 2;
+                    westEdge.position.x = -(mazeLength / 2 + wallDepth / 2);
+                    westEdge.rotation.y = -Math.PI / 2;
+                    westEdge.material = stone2;
+                    westEdge.setCollisions = true;
+
+                    var eastEdge = new BABYLON.MeshBuilder.CreateBox("northEdge", { height: elevation - 0.1, width: groundSize, depth: 0.1 }, scene1);
+                    eastEdge.position.y = elevation / 2;
+                    eastEdge.position.x = mazeLength / 2 + wallDepth / 2;
+                    eastEdge.rotation.y = Math.PI / 2;
+                    eastEdge.material = stone2;
+                    eastEdge.setCollisions = true;
+
+                }
+            }
+            worldStructure();
+
+            // Trees
+            var placeTrees = function() {
+                // Create a sprite manager to optimize GPU ressources
+                // Parameters : name, imgUrl, capacity, cellSize, scene1
+                var spriteManagerTrees = new BABYLON.SpriteManager("treesManager", "textures/pine.png", 2000, { width: 394, height: 537 }, scene1);
+
+                // Trees at random positions
+                for (var i = 0; i < sub * 20; i++) {
+                    // mesh around trees
+                    var treeMesh = BABYLON.MeshBuilder.CreateSphere("treeMesh", { diameterY: 20, diameterX: 6, diameterZ: 7 }, scene1);
+                    treeMesh.position.y = 7 + elevation;
+                    treeMesh.material = pMat;
+                    treeMesh.checkCollisions = true;
+
+                    do {
+                        var xSpot = Math.random() * groundSize - groundSize / 2;
+                        var zSpot = Math.random() * groundSize - groundSize / 2;
+                    } while (((xSpot > -mazeLength / 2 - 8 && xSpot < mazeLength / 2 + 8) && (zSpot > -mazeLength / 2 - 8 && zSpot < mazeLength / 2 + 8)) ||
+                    ((xSpot < 10 + (sub % 2 - 1) * (subLength / 2) && xSpot > -10 + (sub % 2 - 1) * (subLength / 2)) && (zSpot < -mazeLength / 2 && zSpot > -groundSize / 2)) ||
+                        (zSpot > -(trenchSize + 2) && zSpot < trenchSize + 2));
+
+                    tree = new BABYLON.Sprite("tree", spriteManagerTrees);
+                    tree.size = 20;
+                    tree.position.x = xSpot;
+                    tree.position.z = zSpot;
+                    treeMesh.position.x = xSpot;
+                    treeMesh.position.z = zSpot;
+                    tree.position.y = 7 + elevation;
+                }
+            }
+            placeTrees();
+
+            // Player Mesh
+            var createPlayerMesh = function() {
+                player = BABYLON.MeshBuilder.CreateSphere("player", { diameterY: 6, diameterX: 3, diameterZ: 3 }, scene1);
+                player.material = pMat;
+                // player.position = new BABYLON.Vector3(-100, 3, -100);
+                player.ellipsoid = new BABYLON.Vector3(1, 7, 2.5);
+                player.checkCollisions = true;
+                player.applyGravity = true;
+                player.speed = new BABYLON.Vector3(0, 0, 0.08);
+                player.nextspeed = new BABYLON.Vector3.Zero();
+                player.physicsImpostor = new BABYLON.PhysicsImpostor(
+                    player, BABYLON.PhysicsImpostor.SphereImpostor,
+                    { mass: 150, restitution: 0, friction: 1 }, scene1);
+                if (follow) {
+                    followCam.lockedTarget = player;
+                }
+            }
+            createPlayerMesh();
+
+
+            // Sprite Sheets
+            var walkingThor;
+            var runningThor;
+            var createSpriteCycles = function() {
+                var spriteManagerWalkingThor = new BABYLON.SpriteManager(
+                    "WalkingThorManager",
+                    "spritesheets/walking_thor.png",
+                    64, { width: 800 / 8, height: 800 / 8 }, scene1
+                );
+                walkingThor = new BABYLON.Sprite("walkingThor", spriteManagerWalkingThor);
+                walkingThor.cellIndex = 0;
+                walkingThor.size = 6;
+                walkingThor.position.y = 3 + elevation;
+                walkingThor.position.x = 0;
+                walkingThor.position.z = 0;
+
+                // Running Thor
+                var spriteManagerRunningThor = new BABYLON.SpriteManager(
+                    "RunningThorManager",
+                    "spritesheets/running_thor.png",
+                    64, { width: 800 / 8, height: 800 / 8 }, scene1
+                );
+                runningThor = new BABYLON.Sprite("runningThor", spriteManagerRunningThor);
+                runningThor.cellIndex = 0;
+                runningThor.size = 6;
+                runningThor.position.y = 3 + elevation;
+                runningThor.position.x = 0;
+                runningThor.position.z = 0;
+            }
+            createSpriteCycles();
+
+            // Maze Wall Grid
+            var wallArray = [];
+            var createMazeWallGrid = function() {
+                var i = 0;
+                var j = 0;
+                var index = 0;
+                for (i = 0; i <= sub * 2; i++) {
+                    wallArray.push([]);
+                    for (j = 0; j <= sub; j++) {
+                        if (!(i % 2 === 0 && j === sub)) {
+                            var mazeWall = new BABYLON.MeshBuilder.CreateBox(
+                                "mazeWall",
+                                { height: wallHeight + Math.random() * 0.5, width: subLength + subLength * 0.4, depth: wallDepth + Math.random() * 0.2 },
+                                scene1);
+                        }
+                        mazeWall.material = hedge;
+                        mazeWall.checkCollisions = true;
+                        mazeWall.position.y = wallHeight / 2 + elevation;
+                        mazeWall.position.z = mazeLength - subLength / 2 * i - mazeLength / 2;
+                        // console.log("placed wall at z:")
+                        // console.log(mazeLength - subLength / 2 * i + 50);
+                        if (i % 2 === 0) {
+                            if (j < sub) {
+                                mazeWall.position.x = subLength / 2 + subLength * j - mazeLength / 2;
+                                // console.log("placed horizontal wall at:");
+                                // console.log(mazeLength - subLength / 2 * i + 50);
+                                // console.log(subLength / 2 + subLength * j + 50);
+                            }
+                        }
+                        if (i % 2 === 1) {
+                            mazeWall.position.x = subLength * j - mazeLength / 2;
+                            mazeWall.rotation.y = Math.PI / 2;
+                            // console.log("placed vertical wall at:");
+                            // console.log(mazeLength - subLength / 2 * i + 50);
+                            // console.log(subLength * j + 50);
+                        }
+                        wallArray[i].push(mazeWall);
+                    }
+                }
+            }
+            createMazeWallGrid();
+
+            // Maze Generator
+            var grid = [];          
+            var myStack = [];       // stack to push previously visited cells to.
+            var mazeIndex = 0;
+            var generateMaze = function () {
+                // initialize array
+                for (i = 0; i < sub; i++) {
+                    grid.push([]);
+                    for (j = 0; j < sub; j++) {
+                        grid[i].push(new Cell(i, j, 0, [], null));
+                    }
+                }
+                // start recursive function
+                recursive_backtracking(0, sub - 1, grid, wallArray, myStack, mazeIndex);
+                // Entrance
+                wallArray[sub * 2][Math.round(sub / 2) - 1].dispose();
+                delete wallArray[sub * 2][Math.round(sub / 2) - 1];
+                // Exit
+                wallArray[0][Math.round(sub / 2) - 1].dispose();
+                delete wallArray[0][Math.round(sub / 2) - 1];
+            }
+            generateMaze();
+
+            // set player where maze entrance is (or end of maze if specified in global variables)
+            if (sub % 2 === 1) {
+                if (!end) { player.position = new BABYLON.Vector3(0, 3 + elevation, -mazeLength / 2 - mazeLength * 0.05) }
+                else { player.position = new BABYLON.Vector3(0, 3 + elevation, mazeLength / 2 + mazeLength * 0.05) }
+            }
+            else {
+                if (!end) { player.position = new BABYLON.Vector3(-subLength / 2, 3 + elevation, -mazeLength / 2 - mazeLength * 0.05) }
+                else { player.position = new BABYLON.Vector3(-subLength / 2, 3 + elevation, mazeLength / 2 + mazeLength * 0.05) }
+            }
+
+            // Torches
+            var createTorches = function() {
+                // var light2 = new BABYLON.PointLight("lamplight", new BABYLON.Vector3(-subLength, 3, -mazeLength / 2 - mazeLength * 0.02), scene1);
+                // light2.diffuse = new BABYLON.Color3(0.9, 0.7, 0.4);
+                // light2.specular = new BABYLON.Color3(0.4, 0.2, 0);
+                var lampstand = BABYLON.MeshBuilder.CreateCylinder("lampstand", { height: 6, diameterTop: 3, diameterBottom: 1.75, tessellation: 24 }, scene1);
+                lampstand.position = new BABYLON.Vector3(-subLength + (sub % 2) * (subLength / 2), 3 + elevation, -mazeLength / 2 - 4);
+                // lampstand.rotation.z = Math.PI;
+                lampstand.material = rock;
+                lampstand.checkCollisions = true;
+                //lamp 2
+                // var light3 = new BABYLON.PointLight("lamplight", new BABYLON.Vector3(0, 3, -mazeLength / 2 - mazeLength * 0.02), scene1);
+                // light3.diffuse = new BABYLON.Color3(0.9, 0.7, 0.4);
+                // light3.specular = new BABYLON.Color3(0.4, 0.2, 0);
+                var lampstand2 = BABYLON.MeshBuilder.CreateCylinder("lampstand", { height: 6, diameterTop: 3, diameterBottom: 1.75, tessellation: 24 }, scene1);
+                lampstand2.position = new BABYLON.Vector3((sub % 2) * (subLength / 2), 3 + elevation, -mazeLength / 2 - 4);
+                // lampstand2.rotation.z = Math.PI;
+                lampstand2.material = rock;
+                lampstand2.checkCollisions = true;
+
+                // Fire
+                var sparks = new BABYLON.ParticleSystem("sparks", 1000, scene1);
+                sparks.particleTexture = new BABYLON.Texture("textures/fire.png", scene1);
+                sparks.emitter = new BABYLON.Vector3(-subLength + (sub % 2) * (subLength / 2), 6 + elevation, -mazeLength / 2 - 4);
+                sparks.minEmitBox = new BABYLON.Vector3(-0.5, 0, 0.5);
+                sparks.maxEmitBox = new BABYLON.Vector3(0.5, 0, -0.5);
+                sparks.color1 = new BABYLON.Color4(0.7, 0, 0, 1.0);
+                sparks.color2 = new BABYLON.Color4(0.5, 0.5, 0, 1.0);
+                sparks.minSize = 0.4;
+                sparks.maxSize = 1.5;
+                sparks.minLifeTime = 0.2;
+                sparks.maxLifeTime = 0.5;
+                sparks.emitRate = 4000;
+                sparks.direction1 = new BABYLON.Vector3(0, 3, 0);
+                sparks.direction2 = new BABYLON.Vector3(0, 1.5, 0);
+                sparks.minEmitPower = 1;
+                sparks.maxEmitPower = 7;
+                sparks.updateSpeed = 0.005;
+                sparks.start();
+
+                var sparks2 = new BABYLON.ParticleSystem("sparks", 1000, scene1);
+                sparks2.particleTexture = new BABYLON.Texture("textures/fire.png", scene1);
+                sparks2.emitter = new BABYLON.Vector3((sub % 2) * (subLength / 2), 6 + elevation, -mazeLength / 2 - 4);
+                sparks2.minEmitBox = new BABYLON.Vector3(-0.5, 0, 0.5);
+                sparks2.maxEmitBox = new BABYLON.Vector3(0.5, 0, -0.5);
+                sparks2.color1 = new BABYLON.Color4(0.7, 0, 0, 1.0);
+                sparks2.color2 = new BABYLON.Color4(0.5, 0.5, 0, 1.0);
+                sparks2.minSize = 0.4;
+                sparks2.maxSize = 1.5;
+                sparks2.minLifeTime = 0.2;
+                sparks2.maxLifeTime = 0.5;
+                sparks2.emitRate = 4000;
+                sparks2.direction1 = new BABYLON.Vector3(0, 3, 0);
+                sparks2.direction2 = new BABYLON.Vector3(0, 1.5, 0);
+                sparks2.minEmitPower = 1;
+                sparks2.maxEmitPower = 7;
+                sparks2.updateSpeed = 0.005;
+                sparks2.start();
+            }
+            createTorches();
+
+            // Party at end
+            var confettiRed;
+            var confettiBlueGreen;
+            var confetti;
+            var createParty = function() {
+
+                // red/orange
+                confettiRed = new BABYLON.ParticleSystem("confettiRed", 500, scene1);
+                confettiRed.particleTexture = new BABYLON.Texture("textures/fire.png", scene1);
+                confettiRed.emitter = new BABYLON.Vector3(-subLength / 2, 18, mazeLength / 2 + subLength * 2);
+                confettiRed.minEmitBox = new BABYLON.Vector3(-2 * subLength, 0, 2 * subLength);
+                confettiRed.maxEmitBox = new BABYLON.Vector3(2 * subLength, 0, -2 * subLength);
+                confettiRed.color1 = new BABYLON.Color4(0.7, 0, 0, 1.0);
+                confettiRed.color2 = new BABYLON.Color4(0.5, 0.5, 0, 1.0);
+                confettiRed.minSize = 0.4;
+                confettiRed.maxSize = 1.5;
+                confettiRed.minLifeTime = 0.2;
+                confettiRed.maxLifeTime = 0.5;
+                confettiRed.emitRate = 2000;
+                confettiRed.direction1 = new BABYLON.Vector3(0, -3, 0);
+                confettiRed.direction2 = new BABYLON.Vector3(0, -10, 0);
+                confettiRed.minEmitPower = 1;
+                confettiRed.maxEmitPower = 3;
+                confettiRed.updateSpeed = 0.005;
+
+                // blue/green
+                confettiBlueGreen = new BABYLON.ParticleSystem("confettiBlueGreen", 500, scene1);
+                confettiBlueGreen.particleTexture = new BABYLON.Texture("textures/fire.png", scene1);
+                confettiBlueGreen.emitter = new BABYLON.Vector3(-subLength / 2, 18, mazeLength / 2 + subLength * 2);
+                confettiBlueGreen.minEmitBox = new BABYLON.Vector3(-2 * subLength, 0, 2 * subLength);
+                confettiBlueGreen.maxEmitBox = new BABYLON.Vector3(2 * subLength, 0, -2 * subLength);
+                confettiBlueGreen.color1 = new BABYLON.Color4(0, 0, 1, 1.0);
+                confettiBlueGreen.color2 = new BABYLON.Color4(0.3, 0.7, 1, 1.0);
+                confettiBlueGreen.minSize = 0.4;
+                confettiBlueGreen.maxSize = 1.5;
+                confettiBlueGreen.minLifeTime = 0.2;
+                confettiBlueGreen.maxLifeTime = 0.5;
+                confettiBlueGreen.emitRate = 2000;
+                confettiBlueGreen.direction1 = new BABYLON.Vector3(0, -3, 0);
+                confettiBlueGreen.direction2 = new BABYLON.Vector3(0, -10, 0);
+                confettiBlueGreen.minEmitPower = 1;
+                confettiBlueGreen.maxEmitPower = 3;
+                confettiBlueGreen.updateSpeed = 0.005;
+
+                // sparser confetti towards edges
+                confetti = new BABYLON.ParticleSystem("confetti", 500, scene1);
+                confetti.particleTexture = new BABYLON.Texture("textures/fire.png", scene1);
+                confetti.emitter = new BABYLON.Vector3(-subLength / 2, 18, mazeLength / 2 + subLength * 2);
+                confetti.minEmitBox = new BABYLON.Vector3(-4 * subLength, 0, 4 * subLength);
+                confetti.maxEmitBox = new BABYLON.Vector3(4 * subLength, 0, -4 * subLength);
+                confetti.color1 = new BABYLON.Color4(0.7, 0, 0, 1.0);
+                confetti.color2 = new BABYLON.Color4(0.5, 0.5, 0, 1.0);
+                confetti.minSize = 0.4;
+                confetti.maxSize = 1.5;
+                confetti.minLifeTime = 0.2;
+                confetti.maxLifeTime = 0.5;
+                confetti.emitRate = 2000;
+                confetti.direction1 = new BABYLON.Vector3(0, -3, 0);
+                confetti.direction2 = new BABYLON.Vector3(0, -10, 0);
+                confetti.minEmitPower = 1;
+                confetti.maxEmitPower = 3;
+                confetti.updateSpeed = 0.005;
+
+            }
+            createParty();
+
+            /***********************************************************************************************************************************************************/
+
+            // Keypress events
+            window.keyisdown = {};
+            window.addEventListener('keydown', function (event) {
+                window.keyisdown[event.keyCode] = true;
+            });
+
+            window.addEventListener('keyup', function (event) {
+                window.keyisdown[event.keyCode] = false;
+            });
+
+            window.tempv = new BABYLON.Vector3.Zero();
+
+            var totalCells = 64;    // total number of cells in sprite
+            var index = 0;          // governs when sprites move
+
+            scene1.registerBeforeRender(function () {
+                
+                var makeZoomAndParty = function() {
+                    // bird's eye view for z
+                    if (follow) {
+                        if (window.keyisdown[90]
+                            && -mazeLength / 2 < player.position.x && player.position.x < mazeLength / 2    // only lets you zoom out when inside the maze
+                            && -mazeLength / 2 < player.position.z && player.position.z < mazeLength / 2
+                            && !blockZoom
+                        ) {
+                            // Zoom out
+                            followCam.radius = sub * 9;
+                            followCam.heightOffset = sub * 9;
+                            followCam.rotationOffset = 180;
+                        }
+                        else {
+                            // Zoom in
+                            followCam.radius = 15;
+                            followCam.heightOffset = 30;
+                        }
+                    }
+
+                    // if player is at end of maze, create party
+                    if (-(subLength * 2) < player.position.x && player.position.x < subLength * 2 &&
+                        mazeLength / 2 + 5 < player.position.z && player.position.z < mazeLength / 2 + subLength * 3 && !madeIt) {
+                        console.log("player made it to end of maze");
+                        madeIt = true;
+                        blockZoom = true;
+                        confettiRed.start();
+                        confettiBlueGreen.start();
+                        confetti.start();
+                        soundtrack.pause();
+                        starWars.play();
+                        scene1GUI();
+                    }
+                    // Player Torch: not used. shadows are too cpu intensive
+                    // playerLight.position = player.position;
+                }
+                makeZoomAndParty();
+
+                // Player Walking or Running
+                var makePlayerMove = function() {
+                    // delay variable is loop interval at which player sprite operates (uses modulus)
+                    // when space bar is pressed, run.
+                    if (!window.keyisdown[32]) {
+                        var v = 0.15;
+                        var delay = 6;
+                        walkingThor.position = player.position;
+                        runningThor.position.y = player.position.y - 10;
+                    }
+                    else {
+                        var v = 0.45;
+                        var delay = 4;
+                        runningThor.position = player.position;
+                        walkingThor.position.y = player.position.y - 10;
+                    }
+
+                    if (madeIt) {
+                        confetti.emitter = player.position;
+                    }
+                    player.nextspeed.x = 0.0;
+                    player.nextspeed.z = 0.00001;
+                    index += 1;
+                    // Left "a"
+                    if (window.keyisdown[65] && !window.keyisdown[87] && !window.keyisdown[83]) {
+                        player.nextspeed.x = -v;
+                        moveSprite(8, 15, delay, totalCells, index, walkingThor);
+                        // if running
+                        moveSprite(8, 15, delay, totalCells, index, runningThor);
+                    }
+                    // Right "d"
+                    if (window.keyisdown[68] && !window.keyisdown[87] && !window.keyisdown[83]) {
+                        player.nextspeed.x = v;
+                        moveSprite(16, 23, delay, totalCells, index, walkingThor);
+                        moveSprite(16, 23, delay, totalCells, index, runningThor);
+                    }
+                    // Up "w"
+                    if (window.keyisdown[87] && !window.keyisdown[65] && !window.keyisdown[68]) {
+                        player.nextspeed.z = v;
+                        moveSprite(24, 31, delay, totalCells, index, walkingThor);
+                        moveSprite(24, 31, delay, totalCells, index, runningThor);
+                    }
+                    // Down "s"
+                    if (window.keyisdown[83] && !window.keyisdown[65] && !window.keyisdown[68]) {
+                        player.nextspeed.z = -v;
+                        moveSprite(0, 7, delay, totalCells, index, walkingThor);
+                        moveSprite(0, 7, delay, totalCells, index, runningThor);
+                    }
+
+                    // MultiDirectional
+
+                    // UpLeft
+                    if (window.keyisdown[65] && window.keyisdown[87]) {
+                        player.nextspeed.x = - Math.sqrt(Math.pow(v, 2) / 2);   // makes trig combination equal to v
+                        player.nextspeed.z = Math.sqrt(Math.pow(v, 2) / 2);
+                        moveSprite(40, 47, delay, totalCells, index, walkingThor);
+                        moveSprite(40, 47, delay, totalCells, index, runningThor);
+                    }
+                    // UpRight
+                    if (window.keyisdown[68] && window.keyisdown[87]) {
+                        player.nextspeed.x = Math.sqrt(Math.pow(v, 2) / 2);
+                        player.nextspeed.z = Math.sqrt(Math.pow(v, 2) / 2);
+                        moveSprite(56, 63, delay, totalCells, index, walkingThor);
+                        moveSprite(56, 63, delay, totalCells, index, runningThor);
+                    }
+                    // BottomRight
+                    if (window.keyisdown[68] && window.keyisdown[83]) {
+                        player.nextspeed.x = Math.sqrt(Math.pow(v, 2) / 2);
+                        player.nextspeed.z = - Math.sqrt(Math.pow(v, 2) / 2);
+                        moveSprite(48, 55, delay, totalCells, index, walkingThor);
+                        moveSprite(48, 55, delay, totalCells, index, runningThor);
+                    }
+                    // BottomLeft
+                    if (window.keyisdown[65] && window.keyisdown[83]) {
+                        player.nextspeed.x = - Math.sqrt(Math.pow(v, 2) / 2);
+                        player.nextspeed.z = - Math.sqrt(Math.pow(v, 2) / 2);
+                        moveSprite(32, 39, delay, totalCells, index, walkingThor);
+                        moveSprite(32, 39, delay, totalCells, index, runningThor);
+                    }
+                    // Top Three (a, w, d)
+                    if (window.keyisdown[87] && window.keyisdown[65] && window.keyisdown[68]) {
+                        player.nextspeed.z = v;
+                        moveSprite(24, 31, delay, totalCells, index, walkingThor);
+                        moveSprite(24, 31, delay, totalCells, index, runningThor);
+                    }
+                    // Bottom Three (a, s, d)
+                    if (window.keyisdown[83] && window.keyisdown[65] && window.keyisdown[68]) {
+                        player.nextspeed.z = -v;
+                        moveSprite(0, 7, delay, totalCells, index, walkingThor);
+                        moveSprite(0, 7, delay, totalCells, index, runningThor);
+                    }
+
+
+
+                    player.speed = BABYLON.Vector3.Lerp(player.speed, player.nextspeed, 0.1);
+                    player.moveWithCollisions(player.speed);
+
+                    if (player.position.z < -groundSize / 2 + 15) { player.position.z = -groundSize / 2 + 15; }
+
+                    // player.nexttorch = lightImpostor.getAbsolutePosition();
+                    // torch.position.copyFrom(player.nexttorch);
+                    // torch.intensity = 0.7 + Math.random() * 0.1;
+                    // torch.position.x += Math.random() * 0.125 - 0.0625;
+                    // torch.position.z += Math.random() * 0.125 - 0.0625;
+                    // camera.target = player;
+                }
+                makePlayerMove();
+
+            });
+
+            // /*********************************************************************************************************************/
+
+            return scene1;
+        }
+
+        // ==== Recursive Maze Function ====
+        function recursive_backtracking(cx, cy, grid, wallArray, myStack, index) {
+            // new x and y indices
+            var nx;
+            var ny;
+            // iterator
+            var i;
+            // array holding cardinal directions, shuffled for random
+            var N = -1; // because North is negative 1 on z axis
+            var S = 1;  // because South is 1 on z axis
+            var W = -2; // because West is -1 on x axis (divide by 2 everywhere else)
+            var E = 2;  // opposite ^^^
+            var directions = [N, S, W, E];
+            shuffle(directions);
+            // set 1 at current cell so we know we've been here
+            grid[cy][cx].setVisited(1);
+
+            // console.log("cy");
+            // console.log(cy);
+            // console.log("cx");
+            // console.log(cx);
+
+            // loops through array of randomized directions
+            for (i = 0; i < directions.length; i++) {
+                if (directions[i] === E || directions[i] === W) {
+                    nx = cx + directions[i] / 2;
+                    ny = cy;
+                }
+                else {
+                    // if north/south
+                    nx = cx;
+                    ny = cy + directions[i];
+                }
+                // if new cell is inbounds and not visitied previously
+                if ((nx >= 0 && nx < grid[0].length) && (ny >= 0 && ny < grid.length) && grid[ny][nx].getVisited === 0) {
+                    myStack.push(cx);
+                    myStack.push(cy);
+                    // Tear down wall and add link between old cell and new
+                    if (directions[i] === N) {
+                        grid[cy][cx].pushLinks(new Cell(ny, nx, 0, null, N));
+                        grid[ny][nx].pushLinks(new Cell(cy, cx, 0, null, S));
+                        wallArray[2 * cy + 1 + N][cx].dispose();
+                        delete wallArray[2 * cy + 1 + N][cx];
+                        // console.log("tear down wall at:");
+                        // console.log(2 * cy + 1 + N);
+                        // console.log(cx);
+                    }
+                    if (directions[i] === S) {
+                        grid[cy][cx].pushLinks(new Cell(ny, nx, 0, null, S));
+                        grid[ny][nx].pushLinks(new Cell(cy, cx, 0, null, N));
+                        wallArray[2 * cy + 1 + S][cx].dispose();
+                        delete wallArray[2 * cy + 1 + S][cx];
+                        // console.log("tear down wall at:");
+                        // console.log(2 * cy + 1 + + S);
+                        // console.log(cx);
+                    }
+                    if (directions[i] === E) {
+                        grid[cy][cx].pushLinks(new Cell(ny, nx, 0, null, E));
+                        grid[ny][nx].pushLinks(new Cell(cy, cx, 0, null, W));
+                        wallArray[2 * cy + 1][cx + E / 2].dispose();
+                        delete wallArray[2 * cy + 1][cx + E / 2];
+                        // console.log("tear down wall at:");
+                        // console.log(2 * cy + 1);
+                        // console.log(cx + E / 2);
+                    }
+                    if (directions[i] === W) {
+                        grid[cy][cx].pushLinks(new Cell(ny, nx, 0, null, W));
+                        grid[ny][nx].pushLinks(new Cell(cy, cx, 0, null, E));
+                        wallArray[2 * cy + 1][cx].dispose();
+                        delete wallArray[2 * cy + 1][cx];
+                        // console.log("tear down wall at:");
+                        // console.log(2 * cy + 1);
+                        // console.log(cx);
+                    }
+                    index++;
+                    // console.log("moving forward");
+                    recursive_backtracking(nx, ny, grid, wallArray, myStack, index);
+                }
+            }
+            // if no options available - not in for loop
+            if (myStack.length === 0 && index != 0) {
+                return 0;
+            }
+            var py = myStack.pop();
+            var px = myStack.pop();
+            index++;
+            recursive_backtracking(px, py, grid, wallArray, myStack, index);
+        }
+
+        function shuffle(array) {
+            for (let i = array.length - 1; i > 0; i--) {
+                let j = Math.floor(Math.random() * (i + 1)); // random index from 0 to i
+
+                // swap elements array[i] and array[j]
+                [array[i], array[j]] = [array[j], array[i]];
+            }
+        }
+
+        /* ==== function moveSprite ====
+         * min and max are bounds for sprite cells
+         * delay is modulo number to slow down frame rate
+         * total is total number of cells in sprite
+         * index is used for slowing frame rate
+         * walkingThor is sprite object
+         */
+        function moveSprite(min, max, delay, total, index, walkingThor) {
+            if (index % delay === 0) {
+                if (walkingThor.cellIndex < min || walkingThor.cellIndex > max) {
+                    walkingThor.cellIndex = min;
+                }
+                walkingThor.cellIndex = (walkingThor.cellIndex + 1) % (total + 1);
+                if (walkingThor.cellIndex > max) {
+                    walkingThor.cellIndex = min;
+                }
+            }
+        }
+
+        // was for stopwatch, not used yet though
+        function sleep(milliseconds) {
+            const date = Date.now();
+            let currentDate = null;
+            do {
+                currentDate = Date.now();
+            } while (currentDate - date < milliseconds);
+        }
+
+
+        engine = createDefaultEngine();
+        if (!engine) throw 'engine should not be null.';
+        if (!nextScene) {
+            scene0 = createScene0();
+        } else {
+            scene1 = createScene1();
+        }
+
+        // was for stopwatch. Isn't working yet.
+        var time = 0.0;
+        function timer() {
+            time += 0.001;
+        }
+        if (true) {
+            setTimeout('timer()', 1);
+            console.log("Time:");
+            console.log(time);
+        }
+
+        // gui for Home Menu
+        var scene0GUI = function () {
+            var cornerRadius = 10;
+            var squareSide = 300;
+            var buttonPadding = 100;
+
+            advancedTexture = BABYLON.GUI.AdvancedDynamicTexture.CreateFullscreenUI("UI", true, scene0);
+            // advancedTexture.renderAtIdealSize = true;
+            advancedTexture.useSmallestIdeal = true;
+            advancedTexture.idealWidth = 1300;
+            advancedTexture.idealHeight = 1300;
+
+            var backgroundPanel = new BABYLON.GUI.StackPanel();
+            advancedTexture.addControl(backgroundPanel);
+
+            var difficultyPanel = new BABYLON.GUI.StackPanel();
+            difficultyPanel.isVertical = false;
+            difficultyPanel.top = "125px";
+            advancedTexture.addControl(difficultyPanel);
+
+            var logoPanel = new BABYLON.GUI.StackPanel();
+            logoPanel.top = "-300px";
+            advancedTexture.addControl(logoPanel);
+
+            var textPanel = new BABYLON.GUI.Rectangle();
+            textPanel.top = "400px";
+            textPanel.width = "1100px";
+            textPanel.height = "300px";
+            textPanel.thickness = 0;
+            advancedTexture.addControl(textPanel);
+
+            // Easy Level Button
+            var easyButton = BABYLON.GUI.Button.CreateImageWithCenterTextButton("but", "", "images/new_easy.png");
+            easyButton.width = squareSide.toString() + "px";
+            easyButton.height = (squareSide / 2).toString() + "px";
+            easyButton.cornerRadius = cornerRadius;
+            easyButton.verticalAlignment = 2
+            easyButton.thickness = 0;
+            easyButton.isPointerBlocker = true
+            easyButton.onPointerUpObservable.add(function () {
+                advancedTexture.dispose();
+                nextScene = true;
+                replay = true;
+                soundtrack.pause();
+                sub = 10;
+                difficultyLevel = 0;
+                scene0 = null;
+                scene1 = createScene1();
+                scene1GUI();
+            });
+            difficultyPanel.addControl(easyButton);
+
+            // Medium Level Button
+            var mediumButton = BABYLON.GUI.Button.CreateImageWithCenterTextButton("but2", "", "images/new_medium.png");
+            mediumButton.width = (squareSide + buttonPadding).toString() + "px";
+            mediumButton.height = (squareSide / 2).toString() + "px";
+            mediumButton.paddingLeft = buttonPadding.toString() + "px";
+            mediumButton.cornerRadius = cornerRadius;
+            mediumButton.verticalAlignment = 2
+            mediumButton.thickness = 0;
+            mediumButton.isPointerBlocker = true
+            mediumButton.onPointerUpObservable.add(function () {
+                advancedTexture.dispose();
+                nextScene = true;
+                replay = true;
+                soundtrack.pause();
+                sub = 20;
+                difficultyLevel = 1;
+                scene0 = null;
+                scene1 = createScene1();
+                scene1GUI();
+            });
+
+            difficultyPanel.addControl(mediumButton);
+
+            // Hard Level Button
+            var hardButton = BABYLON.GUI.Button.CreateImageWithCenterTextButton("but3", "", "images/new_hard.png");
+            hardButton.width = (squareSide + buttonPadding).toString() + "px";
+            hardButton.height = (squareSide / 2).toString() + "px";
+            hardButton.paddingLeft = buttonPadding.toString() + "px";
+            hardButton.cornerRadius = cornerRadius;
+            hardButton.verticalAlignment = 2
+            hardButton.thickness = 0;
+            hardButton.isPointerBlocker = true
+            hardButton.onPointerUpObservable.add(function () {
+                advancedTexture.dispose();
+                nextScene = true;
+                replay = true;
+                soundtrack.pause();
+                sub = 30;
+                difficultyLevel = 2;
+                scene0 = null;
+                scene1 = createScene1();
+                scene1GUI();
+            });
+
+            difficultyPanel.addControl(hardButton);
+
+            // Game Logo
+            var logo = new BABYLON.GUI.Image("but4", "images/new_logo.png");
+            logo.width = "800px";
+            logo.height = "400px";
+            logoPanel.addControl(logo);
+
+            // Background
+            var background = new BABYLON.GUI.Image("but5", "images/background.png");
+            background.width = 1;
+            background.height = "1500px";
+            backgroundPanel.addControl(background);
+
+            var directions = new BABYLON.GUI.TextBlock();
+            directions.text = "Welcome young Squire! Select your hardship and use the 'w', 'a', 's', and 'd' keys to move thine avatar. " + 
+                              "Bear the space bar to run and depress the z key to zoom out, obtaining a bird's eye view.";
+            directions.color = "white";
+            directions.fontSize = 34;
+            directions.lineSpacing = "5px";
+            directions.verticalAlignment = 1;
+            directions.textWrapping = true;
+            textPanel.addControl(directions);
+        }
+        if (!nextScene) {
+            scene0GUI();
+        }
+
+        // GUI for Game
+        var scene1GUI = function () {
+            advancedTexture = BABYLON.GUI.AdvancedDynamicTexture.CreateFullscreenUI("UI", true, scene1);
+            var panel = new BABYLON.GUI.StackPanel();
+            panel.isVertical = false;
+            panel.horizontalAlignment = 0;
+            panel.verticalAlignment = 2;
+            advancedTexture.addControl(panel);
+
+            var textPanel2 = new BABYLON.GUI.Rectangle();
+            textPanel2.verticalAlignment = 0;
+            textPanel2.width = 1;
+            textPanel2.height = "50px";
+            textPanel2.thickness = 0;
+            advancedTexture.addControl(textPanel2);
+
+            var homeButton = BABYLON.GUI.Button.CreateImageWithCenterTextButton("but", "Home Menu", "");
+            homeButton.width = "75px";
+            homeButton.height = "50px";
+            homeButton.color = "gray";
+            homeButton.background = "black";
+            homeButton.cornerRadius = 0;
+            homeButton.verticalAlignment = 1;
+            homeButton.horizontalAlignment = 0;
+            homeButton.isPointerBlocker = true
+            homeButton.onPointerUpObservable.add(function () {
+                advancedTexture.dispose();
+                nextScene = false;
+                madeIt = false;
+                blockZoom = false;
+                soundtrack.pause();
+                starWars.pause();
+                scene1 = null;
+                scene0 = createScene0();
+                scene0GUI();
+            });
+            panel.addControl(homeButton);
+
+            var resetPlayerButton = BABYLON.GUI.Button.CreateImageWithCenterTextButton("but", "Reset Player", "");
+            resetPlayerButton.width = "75px";
+            resetPlayerButton.height = "50px";
+            resetPlayerButton.color = "gray";
+            resetPlayerButton.background = "black";
+            resetPlayerButton.cornerRadius = 0;
+            resetPlayerButton.verticalAlignment = 1;
+            resetPlayerButton.horizontalAlignment = 0;
+            resetPlayerButton.isPointerBlocker = true
+            resetPlayerButton.onPointerUpObservable.add(function () {
+                replay = false;
+                if (madeIt) {
+                    soundtrack.pause();
+                    starWars.pause();
+                    madeIt = false;
+                    blockZoom = false;
+                    replay = true;
+                }
+                // set player position
+                if (sub % 2 === 1) {
+                    player.position = new BABYLON.Vector3(0, 3 + elevation, -mazeLength / 2 - mazeLength * 0.05)
+                }
+                else {
+                    player.position = new BABYLON.Vector3(-subLength / 2, 3 + elevation, -mazeLength / 2 - mazeLength * 0.05)
+                }
+            });
+            panel.addControl(resetPlayerButton);
+
+            var newMazeButton = BABYLON.GUI.Button.CreateImageWithCenterTextButton("but", "New Maze", "");
+            newMazeButton.width = "75px";
+            newMazeButton.height = "50px";
+            newMazeButton.color = "gray";
+            newMazeButton.background = "black";
+            newMazeButton.cornerRadius = 0;
+            newMazeButton.verticalAlignment = 1;
+            newMazeButton.horizontalAlignment = 0;
+            newMazeButton.isPointerBlocker = true
+            newMazeButton.onPointerUpObservable.add(function () {
+                advancedTexture.dispose();
+                replay = false;
+                if (madeIt) {
+                    soundtrack.pause();
+                    starWars.pause();
+                    madeIt = false;
+                    blockZoom = false;
+                    replay = true;
+                }
+                scene1 = null;
+                scene1 = createScene1();
+                scene1GUI();
+            });
+            panel.addControl(newMazeButton);
+
+
+
+            // Difficulty level
+            switch (difficultyLevel) {
+                case 0:
+                    var displayDifficulty = BABYLON.GUI.Button.CreateImageWithCenterTextButton("but4", "", "images/new_easy.png");
+                    displayDifficulty.width = "85px";
+                    displayDifficulty.height = "50px";
+                    displayDifficulty.verticalAlignment = 1;
+                    // displayDifficulty.background = "black";
+                    displayDifficulty.thickness = 0;
+                    panel.addControl(displayDifficulty);
+                    break;
+                case 1:
+                    var displayDifficulty = BABYLON.GUI.Button.CreateImageWithCenterTextButton("but4", "", "images/new_medium.png");
+                    displayDifficulty.width = "105px";
+                    displayDifficulty.height = "50px";
+                    displayDifficulty.verticalAlignment = 1;
+                    // displayDifficulty.background = "black";
+                    displayDifficulty.thickness = 0;
+                    panel.addControl(displayDifficulty);
+                    break;
+                case 2:
+                    var displayDifficulty = BABYLON.GUI.Button.CreateImageWithCenterTextButton("but4", "", "images/new_hard.png");
+                    displayDifficulty.width = "95px";
+                    displayDifficulty.height = "50px";
+                    displayDifficulty.verticalAlignment = 1;
+                    // displayDifficulty.background = "black";
+                    displayDifficulty.thickness = 0;
+                    panel.addControl(displayDifficulty);
+                    break;
+            }
+
+            if (madeIt) {
+                var congrats = new BABYLON.GUI.TextBlock();
+                congrats.text = "Congratulations young squire. You have conquered yon maze with ease.";
+                congrats.color = "white";
+                congrats.fontSize = 20;
+                congrats.lineSpacing = "5px";
+                congrats.verticalAlignment = 1;
+                congrats.textWrapping = true;
+                textPanel2.addControl(congrats);
+            }
+
+
+        }
+        if (nextScene) {
+            scene1GUI();
+        }
+
+        engine.runRenderLoop(function () {
+            if (!nextScene && scene0) {
+                scene0.render();
+            }
+            else if (scene1) {
+                scene1.render();
+            }
+        });
+
+        // Resize
+        window.addEventListener("resize", function () {
+            engine.resize();
+        });
+    </script>
+</body>
+
+</html>
